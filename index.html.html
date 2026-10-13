@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>College Football Spread Analyzer</title>
+    
+    <!-- External Libraries with High-Availability CDNs -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'media'
+        };
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.js"></script>
+    <script>
+        if (typeof Vue === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\/script>');
+        }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <style>
+        [v-cloak] { display: none; }
+        body { -webkit-tap-highlight-color: transparent; }
+        .spinner { border: 3px solid #e2e8f0; border-top: 3px solid #2563eb; border-radius: 50%; width: 28px; height: 28px; animation: spin 0.8s linear infinite; }
+        @media (prefers-color-scheme: dark) {
+            .spinner { border-color: #334155; border-top-color: #3b82f6; }
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .logo-img { object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.08)); }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans antialiased min-h-screen flex flex-col justify-between transition-colors duration-200">
+
+<div id="app" v-cloak class="flex-1 flex flex-col w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-6">
+    
+    <!-- Header -->
+    <header class="bg-blue-900 dark:bg-blue-950 text-white rounded-2xl shadow-lg p-4 sm:p-5 mb-4 sm:mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border border-transparent dark:border-blue-900/50">
+        <div>
+            <h1 class="text-xl sm:text-2xl font-black tracking-tight">College Football Spread Analyzer</h1>
+        </div>
+
+        <div class="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
+            <span v-if="dataLoaded" class="text-xs bg-blue-800 dark:bg-blue-900 text-blue-100 px-3 py-1.5 rounded-lg border border-blue-700/50 dark:border-blue-700 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                {{ games.length }} Matchups Loaded
+            </span>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex flex-col">
+        
+        <!-- Loading & Ingestion Card -->
+        <div v-if="!dataLoaded" class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center shadow-sm max-w-xl mx-auto w-full my-auto transition-colors">
+            
+            <div v-if="isLoading" class="flex flex-col items-center py-6">
+                <div class="spinner mb-4"></div>
+                <h2 class="text-lg font-bold text-slate-800 dark:text-slate-100 mb-1">Querying Prediction Tracker Sheet</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400 max-w-xs">Connecting via Google Visualization API...</p>
+            </div>
+
+            <div v-else>
+                <div class="w-12 h-12 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>
+                
+                <h2 class="text-lg font-bold text-slate-800 dark:text-slate-100 mb-1">Sheet Ingestion Status</h2>
+                <p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mb-6 max-w-md mx-auto">{{ loadError || "Unable to sync automatically from Google Sheet." }}</p>
+
+                <div class="flex flex-col sm:flex-row gap-2.5 justify-center mb-6">
+                    <button @click="fetchData" class="bg-blue-600 text-white font-semibold text-sm px-5 py-2.5 rounded-xl hover:bg-blue-700 transition-colors shadow-sm cursor-pointer">
+                        ↻ Retry Sync
+                    </button>
+                    <label class="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-sm px-5 py-2.5 rounded-xl cursor-pointer transition-colors border border-slate-300 dark:border-slate-700">
+                        Upload Local CSV
+                        <input type="file" accept=".csv" @change="handleFileUpload" class="hidden" />
+                    </label>
+                </div>
+
+                <div class="pt-4 border-t border-slate-100 dark:border-slate-800 text-center">
+                    <button @click="showPasteBox = !showPasteBox" class="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium cursor-pointer">
+                        {{ showPasteBox ? 'Hide Manual Input' : 'Paste Raw CSV Text Directly' }}
+                    </button>
+                    <div v-if="showPasteBox" class="mt-3 text-left">
+                        <textarea v-model="pastedText" rows="4" placeholder="Paste CSV text here..." class="w-full p-2.5 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100"></textarea>
+                        <button @click="parsePastedText" class="mt-2 w-full bg-slate-800 dark:bg-slate-700 text-white text-xs font-bold py-2 rounded-lg cursor-pointer">Parse CSV</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Dashboard Workspace -->
+        <div v-else class="flex flex-col flex-1">
+            
+            <!-- Navigation Tabs -->
+            <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3 mb-4 sm:mb-6 flex-wrap gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button @click="activeTab = 'input'" :class="activeTab === 'input' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'" class="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer">
+                        <span>⚡ Matchup Calibration</span>
+                    </button>
+                    
+                    <button @click="activeTab = 'summary'" :class="activeTab === 'summary' ? 'bg-blue-600 text-white shadow-sm' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'" class="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer">
+                        <span>📋 User-Selected Slate</span>
+                        <span class="text-[11px] px-2 py-0.5 rounded-full" :class="activeTab === 'summary' ? 'bg-blue-800 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'">
+                            {{ analyzedGames.length }}
+                        </span>
+                    </button>
+
+                    <button @click="activeTab = 'batch'" :class="activeTab === 'batch' ? 'bg-emerald-700 text-white shadow-sm' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'" class="px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer">
+                        <span>📊 Batch Summary Slate</span>
+                        <span class="text-[11px] px-2 py-0.5 rounded-full" :class="activeTab === 'batch' ? 'bg-emerald-900 text-white' : 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold'">
+                            {{ batchSlateGames.length }}
+                        </span>
+                    </button>
+                </div>
+
+                <!-- Stats Badges -->
+                <div v-if="currentSlateStats" class="flex items-center gap-1.5 text-[11px] font-bold">
+                    <span class="bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 px-2.5 py-1 rounded-md border border-emerald-300 dark:border-emerald-800">
+                        {{ currentSlateStats.strong }} Strong Bets
+                    </span>
+                    <span class="bg-green-100 dark:bg-green-950/80 text-green-800 dark:text-green-300 px-2.5 py-1 rounded-md border border-green-300 dark:border-green-800">
+                        {{ currentSlateStats.bet }} Bets
+                    </span>
+                    <span class="bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300 px-2.5 py-1 rounded-md border border-blue-300 dark:border-blue-800">
+                        {{ currentSlateStats.lean }} Leans
+                    </span>
+                </div>
+            </div>
+
+            <!-- TAB 1: Matchup Calibration & Evaluation -->
+            <div v-show="activeTab === 'input'" class="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
+                
+                <!-- Left Column: Calibration Form & Slate Batch Trigger -->
+                <div class="lg:col-span-5 flex flex-col gap-4">
+                    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 sm:p-6 shadow-sm transition-colors">
+                        <h2 class="text-base sm:text-lg font-black text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 text-xs flex items-center justify-center font-bold">1</span>
+                            Matchup Calibration
+                        </h2>
+
+                        <!-- Matchup Dropdown -->
+                        <div class="mb-4">
+                            <label class="block text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">Select Game</label>
+                            <select v-model="selectedGameId" class="w-full p-3 sm:p-3.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold text-sm sm:text-base focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                <option value="" disabled>-- Select Matchup ({{ games.length }} available) --</option>
+                                <option v-for="game in games" :key="game.id" :value="game.id">
+                                    {{ game.road }} @ {{ game.home }}
+                                </option>
+                            </select>
+                        </div>
+
+                        <!-- Game Benchmarks with Trend Indicator -->
+                        <div v-if="selectedGame" class="space-y-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                            <div class="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl p-3 sm:p-4">
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">Market Benchmarks</span>
+                                    <div v-if="getLineTrend(selectedGame)" class="flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded" :class="getLineTrend(selectedGame).badgeClass">
+                                        <span>{{ getLineTrend(selectedGame).arrow }}</span>
+                                        <span>{{ getLineTrend(selectedGame).text }}</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div class="bg-white dark:bg-slate-900 p-2.5 sm:p-3 rounded-lg border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
+                                        <span class="text-[10px] text-slate-400 dark:text-slate-500 font-bold block uppercase">Open Line</span>
+                                        <span class="font-black text-slate-700 dark:text-slate-200 text-base sm:text-lg block mt-0.5">{{ formatSportsbookLine(selectedGame.home, selectedGame.sheetOpen) }}</span>
+                                    </div>
+                                    <div class="bg-white dark:bg-slate-900 p-2.5 sm:p-3 rounded-lg border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-[10px] text-slate-400 dark:text-slate-500 font-bold block uppercase">Current Line</span>
+                                            <span v-if="getLineTrend(selectedGame)" class="text-xs font-black" :class="getLineTrend(selectedGame).textClass">
+                                                {{ getLineTrend(selectedGame).arrow }}
+                                            </span>
+                                        </div>
+                                        <span class="font-black text-slate-900 dark:text-white text-base sm:text-lg block mt-0.5">{{ formatSportsbookLine(selectedGame.home, selectedGame.sheetLine) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button @click="runAnalysis" class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white py-3.5 px-4 rounded-xl font-black text-sm sm:text-base transition-colors shadow-md shadow-blue-500/20 cursor-pointer">
+                                Run Analysis
+                            </button>
+                        </div>
+
+                        <!-- Batch Analyze Slate Action in Matchup Panel -->
+                        <div class="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800">
+                            <button @click="batchAnalyzeAll" class="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white py-3 px-4 rounded-xl font-black text-sm transition-colors shadow-md shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-2">
+                                <span>⚡ Batch Analyze Slate</span>
+                            </button>
+                            <p class="text-[11px] text-slate-400 dark:text-slate-500 text-center mt-1.5">
+                                Instantly evaluate all {{ games.length }} matchups into the Batch Summary Slate.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Output Analysis Card -->
+                <div class="lg:col-span-7 flex flex-col gap-4">
+                    <div v-if="latestResult" class="bg-white dark:bg-slate-900 rounded-2xl border p-5 sm:p-6 shadow-sm flex flex-col justify-between transition-all" :class="getResultBorderColor(latestResult.finalPick)">
+                        <div>
+                            <div class="flex flex-wrap justify-between items-center gap-2 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+                                <div class="flex items-center gap-2.5">
+                                    <img v-if="latestResult.eventLogo" :src="latestResult.eventLogo" :alt="latestResult.eventLabel" class="w-7 h-7 logo-img" @error="onImgError" />
+                                    <span class="text-xs font-black uppercase tracking-wider px-2.5 py-1 rounded-md" :class="latestResult.eventBadgeStyle">
+                                        {{ latestResult.eventLabel }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-11 items-center gap-2 py-2">
+                                <div class="col-span-5 flex flex-col items-center text-center">
+                                    <div class="w-16 h-16 sm:w-20 sm:h-20 bg-slate-50 dark:bg-slate-800 rounded-2xl p-2 border border-slate-100 dark:border-slate-700 flex items-center justify-center shadow-xs mb-2">
+                                        <img v-if="latestResult.roadInfo.logoUrl" :src="latestResult.roadInfo.logoUrl" :alt="latestResult.road" class="max-w-full max-h-full logo-img" @error="onImgError" />
+                                        <span v-else class="font-black text-lg text-slate-500 dark:text-slate-400">{{ latestResult.road.slice(0, 3) }}</span>
+                                    </div>
+                                    <div class="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-tight">{{ latestResult.road }}</div>
+                                    <span class="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 mt-0.5">{{ latestResult.roadInfo.conf }}</span>
+                                </div>
+
+                                <div class="col-span-1 flex flex-col items-center justify-center">
+                                    <span class="text-xs sm:text-sm font-black text-slate-300 dark:text-slate-600">@</span>
+                                </div>
+
+                                <div class="col-span-5 flex flex-col items-center text-center">
+                                    <div class="w-16 h-16 sm:w-20 sm:h-20 bg-slate-50 dark:bg-slate-800 rounded-2xl p-2 border border-slate-100 dark:border-slate-700 flex items-center justify-center shadow-xs mb-2">
+                                        <img v-if="latestResult.homeInfo.logoUrl" :src="latestResult.homeInfo.logoUrl" :alt="latestResult.home" class="max-w-full max-h-full logo-img" @error="onImgError" />
+                                        <span v-else class="font-black text-lg text-slate-500 dark:text-slate-400">{{ latestResult.home.slice(0, 3) }}</span>
+                                    </div>
+                                    <div class="font-black text-sm sm:text-base text-slate-900 dark:text-white leading-tight">{{ latestResult.home }}</div>
+                                    <span class="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 mt-0.5">{{ latestResult.homeInfo.conf }}</span>
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-50 dark:bg-slate-800/70 rounded-xl p-4 sm:p-5 border border-slate-200/80 dark:border-slate-700/80 my-4 text-center">
+                                <div class="flex justify-center mb-2">
+                                    <span class="text-xs font-black uppercase tracking-wider px-3 py-1 rounded-md" :class="getResultBadgeColor(latestResult.finalPick)">
+                                        {{ latestResult.finalPick }}
+                                    </span>
+                                </div>
+                                <div class="text-[11px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-1">Recommended Side</div>
+                                <div class="text-2xl sm:text-3xl font-black text-blue-900 dark:text-blue-400 tracking-tight">
+                                    {{ latestResult.recommendedSide }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Reads with Model Averages -->
+                        <div class="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                            <!-- Tier 1 -->
+                            <div class="bg-slate-50/70 dark:bg-slate-800/50 p-3 sm:p-4 rounded-xl border border-slate-100 dark:border-slate-700 text-center flex flex-col justify-between">
+                                <div>
+                                    <span class="text-xs font-bold text-slate-500 dark:text-slate-400 block mb-0.5">Tier 1</span>
+                                    <span class="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">{{ latestResult.t1Text }}</span>
+                                </div>
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                                    <span class="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Tier 1 Model Avg</span>
+                                    <span class="font-black text-xs sm:text-sm text-blue-900 dark:text-blue-400 block mt-0.5">{{ latestResult.t1AvgFormatted }}</span>
+                                </div>
+                            </div>
+
+                            <!-- Tier 2 -->
+                            <div class="bg-slate-50/70 dark:bg-slate-800/50 p-3 sm:p-4 rounded-xl border border-slate-100 dark:border-slate-700 text-center flex flex-col justify-between">
+                                <div>
+                                    <span class="text-xs font-bold text-slate-500 dark:text-slate-400 block mb-0.5">Tier 2</span>
+                                    <span class="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">{{ latestResult.t2Text }}</span>
+                                </div>
+                                <div class="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                                    <span class="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase block">Tier 2 Model Avg</span>
+                                    <span class="font-black text-xs sm:text-sm text-blue-900 dark:text-blue-400 block mt-0.5">{{ latestResult.t2AvgFormatted }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else class="bg-white dark:bg-slate-900 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-800 p-8 sm:p-12 text-center my-auto flex flex-col items-center justify-center min-h-[340px] transition-colors">
+                        <div class="w-12 h-12 rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400 dark:text-slate-500 flex items-center justify-center mb-3">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        </div>
+                        <h4 class="font-bold text-slate-700 dark:text-slate-300 text-base mb-1">No Matchup Analyzed Yet</h4>
+                        <p class="text-xs text-slate-400 dark:text-slate-500 max-w-xs">Select a matchup and click "Run Analysis", or use "Batch Analyze Slate" below to evaluate the entire board.</p>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- TAB 2: User-Selected Slate (Sortable Table) -->
+            <div v-show="activeTab === 'summary'" class="flex-1 flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
+                <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-3 bg-slate-50/50 dark:bg-slate-800/40">
+                    <div class="relative w-full sm:w-72">
+                        <input type="text" v-model="summarySearch" placeholder="Filter user-selected games..." class="w-full text-xs sm:text-sm pl-9 pr-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500" />
+                        <svg class="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
+
+                    <div class="text-xs text-slate-500 dark:text-slate-400 font-semibold self-end sm:self-center">
+                        Showing {{ filteredSummary.length }} of {{ analyzedGames.length }} games
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto flex-1">
+                    <table class="w-full text-left border-collapse text-xs sm:text-sm whitespace-nowrap">
+                        <thead class="bg-slate-900 dark:bg-slate-950 text-white font-bold text-xs uppercase tracking-wider select-none">
+                            <tr>
+                                <th class="p-3.5 sm:p-4">Matchup (Away @ Home)</th>
+                                
+                                <!-- Sortable: Event / Conf -->
+                                <th @click="toggleSort('summary', 'event')" class="p-3.5 sm:p-4 text-center cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5 justify-center">
+                                        <span>Event / Conf</span>
+                                        <span class="text-[10px]" :class="summarySortKey === 'event' ? 'text-blue-400 font-black' : 'text-slate-500'">
+                                            {{ summarySortKey === 'event' ? (summarySortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <th class="p-3.5 sm:p-4">Current Line</th>
+
+                                <!-- Sortable: Tier 1 -->
+                                <th @click="toggleSort('summary', 't1')" class="p-3.5 sm:p-4 text-center cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5 justify-center">
+                                        <span>Tier 1</span>
+                                        <span class="text-[10px]" :class="summarySortKey === 't1' ? 'text-blue-400 font-black' : 'text-slate-500'">
+                                            {{ summarySortKey === 't1' ? (summarySortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <!-- Sortable: Tier 2 -->
+                                <th @click="toggleSort('summary', 't2')" class="p-3.5 sm:p-4 text-center cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5 justify-center">
+                                        <span>Tier 2</span>
+                                        <span class="text-[10px]" :class="summarySortKey === 't2' ? 'text-blue-400 font-black' : 'text-slate-500'">
+                                            {{ summarySortKey === 't2' ? (summarySortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <!-- Sortable: Final Pick -->
+                                <th @click="toggleSort('summary', 'pick')" class="p-3.5 sm:p-4 cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5">
+                                        <span>Final Pick</span>
+                                        <span class="text-[10px]" :class="summarySortKey === 'pick' ? 'text-blue-400 font-black' : 'text-slate-500'">
+                                            {{ summarySortKey === 'pick' ? (summarySortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <th class="p-3.5 sm:p-4">Recommended Side</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                            <tr v-for="(res, i) in filteredSummary" :key="i" class="hover:bg-blue-50/40 dark:hover:bg-slate-800/50 transition-colors">
+                                <td class="p-3.5 sm:p-4 font-bold text-slate-900 dark:text-white">
+                                    <div class="flex items-center gap-2">
+                                        <img v-if="res.roadInfo.logoUrl" :src="res.roadInfo.logoUrl" :alt="res.road" class="w-5 h-5 logo-img" @error="onImgError" />
+                                        <span>{{ res.road }}</span>
+                                        <span class="text-slate-400 dark:text-slate-600 font-normal">@</span>
+                                        <img v-if="res.homeInfo.logoUrl" :src="res.homeInfo.logoUrl" :alt="res.home" class="w-5 h-5 logo-img" @error="onImgError" />
+                                        <span>{{ res.home }}</span>
+                                    </div>
+                                </td>
+                                <td class="p-3.5 sm:p-4 text-center">
+                                    <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold" :class="res.eventBadgeStyle">
+                                        <img v-if="res.eventLogo" :src="res.eventLogo" class="w-3.5 h-3.5 logo-img" @error="onImgError" />
+                                        <span>{{ res.eventShortLabel }}</span>
+                                    </div>
+                                </td>
+                                <td class="p-3.5 sm:p-4 text-slate-500 dark:text-slate-400 font-mono text-xs">{{ res.sheetFormattedLine }}</td>
+                                <td class="p-3.5 sm:p-4 text-center font-black text-slate-800 dark:text-slate-200">{{ res.t1Text }}</td>
+                                <td class="p-3.5 sm:p-4 text-center font-black text-slate-800 dark:text-slate-200">{{ res.t2Text }}</td>
+                                <td class="p-3.5 sm:p-4">
+                                    <span class="px-2.5 py-1 rounded-md text-xs font-black inline-block" :class="getResultBadgeColor(res.finalPick)">
+                                        {{ res.finalPick }}
+                                    </span>
+                                </td>
+                                <td class="p-3.5 sm:p-4 font-black text-blue-900 dark:text-blue-400">{{ res.recommendedSide }}</td>
+                            </tr>
+                            <tr v-if="filteredSummary.length === 0">
+                                <td colspan="7" class="p-8 text-center text-slate-400 dark:text-slate-500 italic">
+                                    No user-selected games evaluated yet. Select a matchup and click "Run Analysis".
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 3: Batch Summary Slate (Sortable Table) -->
+            <div v-show="activeTab === 'batch'" class="flex-1 flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden transition-colors">
+                <div class="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-center gap-3 bg-emerald-50/40 dark:bg-emerald-950/20">
+                    <div class="relative w-full sm:w-72">
+                        <input type="text" v-model="batchSearch" placeholder="Filter Batch Slate..." class="w-full text-xs sm:text-sm pl-9 pr-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500" />
+                        <svg class="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
+
+                    <div class="text-xs text-slate-600 dark:text-slate-400 font-semibold self-end sm:self-center">
+                        Showing {{ filteredBatchSummary.length }} of {{ batchSlateGames.length }} total slate games
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto flex-1">
+                    <table class="w-full text-left border-collapse text-xs sm:text-sm whitespace-nowrap">
+                        <thead class="bg-slate-900 dark:bg-slate-950 text-white font-bold text-xs uppercase tracking-wider select-none">
+                            <tr>
+                                <th class="p-3.5 sm:p-4">Matchup (Away @ Home)</th>
+                                
+                                <!-- Sortable: Event / Conf -->
+                                <th @click="toggleSort('batch', 'event')" class="p-3.5 sm:p-4 text-center cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5 justify-center">
+                                        <span>Event / Conf</span>
+                                        <span class="text-[10px]" :class="batchSortKey === 'event' ? 'text-emerald-400 font-black' : 'text-slate-500'">
+                                            {{ batchSortKey === 'event' ? (batchSortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <th class="p-3.5 sm:p-4">Current Line</th>
+
+                                <!-- Sortable: Tier 1 -->
+                                <th @click="toggleSort('batch', 't1')" class="p-3.5 sm:p-4 text-center cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5 justify-center">
+                                        <span>Tier 1</span>
+                                        <span class="text-[10px]" :class="batchSortKey === 't1' ? 'text-emerald-400 font-black' : 'text-slate-500'">
+                                            {{ batchSortKey === 't1' ? (batchSortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <!-- Sortable: Tier 2 -->
+                                <th @click="toggleSort('batch', 't2')" class="p-3.5 sm:p-4 text-center cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5 justify-center">
+                                        <span>Tier 2</span>
+                                        <span class="text-[10px]" :class="batchSortKey === 't2' ? 'text-emerald-400 font-black' : 'text-slate-500'">
+                                            {{ batchSortKey === 't2' ? (batchSortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <!-- Sortable: Final Pick -->
+                                <th @click="toggleSort('batch', 'pick')" class="p-3.5 sm:p-4 cursor-pointer hover:bg-slate-800 dark:hover:bg-slate-900 transition-colors">
+                                    <div class="inline-flex items-center gap-1.5">
+                                        <span>Final Pick</span>
+                                        <span class="text-[10px]" :class="batchSortKey === 'pick' ? 'text-emerald-400 font-black' : 'text-slate-500'">
+                                            {{ batchSortKey === 'pick' ? (batchSortAsc ? '▲' : '▼') : '↕' }}
+                                        </span>
+                                    </div>
+                                </th>
+
+                                <th class="p-3.5 sm:p-4">Recommended Side</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                            <tr v-for="(res, i) in filteredBatchSummary" :key="i" class="hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20 transition-colors">
+                                <td class="p-3.5 sm:p-4 font-bold text-slate-900 dark:text-white">
+                                    <div class="flex items-center gap-2">
+                                        <img v-if="res.roadInfo.logoUrl" :src="res.roadInfo.logoUrl" :alt="res.road" class="w-5 h-5 logo-img" @error="onImgError" />
+                                        <span>{{ res.road }}</span>
+                                        <span class="text-slate-400 dark:text-slate-600 font-normal">@</span>
+                                        <img v-if="res.homeInfo.logoUrl" :src="res.homeInfo.logoUrl" :alt="res.home" class="w-5 h-5 logo-img" @error="onImgError" />
+                                        <span>{{ res.home }}</span>
+                                    </div>
+                                </td>
+                                <td class="p-3.5 sm:p-4 text-center">
+                                    <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold" :class="res.eventBadgeStyle">
+                                        <img v-if="res.eventLogo" :src="res.eventLogo" class="w-3.5 h-3.5 logo-img" @error="onImgError" />
+                                        <span>{{ res.eventShortLabel }}</span>
+                                    </div>
+                                </td>
+                                <td class="p-3.5 sm:p-4 text-slate-500 dark:text-slate-400 font-mono text-xs">{{ res.sheetFormattedLine }}</td>
+                                <td class="p-3.5 sm:p-4 text-center font-black text-slate-800 dark:text-slate-200">{{ res.t1Text }}</td>
+                                <td class="p-3.5 sm:p-4 text-center font-black text-slate-800 dark:text-slate-200">{{ res.t2Text }}</td>
+                                <td class="p-3.5 sm:p-4">
+                                    <span class="px-2.5 py-1 rounded-md text-xs font-black inline-block" :class="getResultBadgeColor(res.finalPick)">
+                                        {{ res.finalPick }}
+                                    </span>
+                                </td>
+                                <td class="p-3.5 sm:p-4 font-black text-blue-900 dark:text-blue-400">{{ res.recommendedSide }}</td>
+                            </tr>
+                            <tr v-if="filteredBatchSummary.length === 0">
+                                <td colspan="7" class="p-8 text-center text-slate-400 dark:text-slate-500 italic">
+                                    No Batch Slate data loaded yet. Click "⚡ Batch Analyze Slate" in the calibration panel to evaluate the board.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Betting Disclaimer -->
+    <footer class="mt-8 pt-4 pb-2 border-t border-slate-200 dark:border-slate-800 text-center transition-colors">
+        <p class="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 max-w-3xl mx-auto leading-relaxed">
+            <strong>Betting Disclaimer:</strong> For informational, educational, and analytical purposes only. Quantitative models, edge calibration, and consensus outputs do not guarantee winning wagers. Sports betting involves substantial financial risk and should only be conducted legally and responsibly. If you or someone you know has a gambling problem and needs support, call <span class="font-bold text-slate-500 dark:text-slate-400">1-800-GAMBLER</span> or visit your state's problem gambling support council.
+        </p>
+    </footer>
+
+</div>
+
+<!-- Un-cloak fallback safeguard -->
+<script>
+    window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => {
+            const el = document.getElementById('app');
+            if (el && el.hasAttribute('v-cloak')) {
+                el.removeAttribute('v-cloak');
+            }
+        }, 1200);
+    });
+</script>
+
+<script>
+    const { createApp } = Vue;
+
+    // Verified 2026 FBS College Football Database (138 Teams)
+    const FBS_TEAMS = {
+        // SEC (16 Teams)
+        "alabama": { name: "Alabama", id: 333, conf: "SEC" },
+        "arkansas": { name: "Arkansas", id: 8, conf: "SEC" },
+        "auburn": { name: "Auburn", id: 2, conf: "SEC" },
+        "florida": { name: "Florida", id: 57, conf: "SEC" },
+        "georgia": { name: "Georgia", id: 61, conf: "SEC" },
+        "kentucky": { name: "Kentucky", id: 96, conf: "SEC" },
+        "lsu": { name: "LSU", id: 99, conf: "SEC" },
+        "mississippi st": { name: "Mississippi State", id: 344, conf: "SEC" },
+        "mississippi state": { name: "Mississippi State", id: 344, conf: "SEC" },
+        "miss st": { name: "Mississippi State", id: 344, conf: "SEC" },
+        "missouri": { name: "Missouri", id: 142, conf: "SEC" },
+        "oklahoma": { name: "Oklahoma", id: 201, conf: "SEC" },
+        "ole miss": { name: "Ole Miss", id: 145, conf: "SEC" },
+        "mississippi": { name: "Ole Miss", id: 145, conf: "SEC" },
+        "south carolina": { name: "South Carolina", id: 257, conf: "SEC" },
+        "tennessee": { name: "Tennessee", id: 2633, conf: "SEC" },
+        "texas": { name: "Texas", id: 251, conf: "SEC" },
+        "texas am": { name: "Texas A&M", id: 245, conf: "SEC" },
+        "texas a&m": { name: "Texas A&M", id: 245, conf: "SEC" },
+        "vanderbilt": { name: "Vanderbilt", id: 238, conf: "SEC" },
+
+        // Big Ten (18 Teams)
+        "illinois": { name: "Illinois", id: 356, conf: "Big Ten" },
+        "indiana": { name: "Indiana", id: 84, conf: "Big Ten" },
+        "iowa": { name: "Iowa", id: 2294, conf: "Big Ten" },
+        "maryland": { name: "Maryland", id: 120, conf: "Big Ten" },
+        "michigan": { name: "Michigan", id: 130, conf: "Big Ten" },
+        "michigan st": { name: "Michigan State", id: 127, conf: "Big Ten" },
+        "michigan state": { name: "Michigan State", id: 127, conf: "Big Ten" },
+        "minnesota": { name: "Minnesota", id: 135, conf: "Big Ten" },
+        "nebraska": { name: "Nebraska", id: 158, conf: "Big Ten" },
+        "northwestern": { name: "Northwestern", id: 77, conf: "Big Ten" },
+        "ohio st": { name: "Ohio State", id: 194, conf: "Big Ten" },
+        "ohio state": { name: "Ohio State", id: 194, conf: "Big Ten" },
+        "oregon": { name: "Oregon", id: 2483, conf: "Big Ten" },
+        "penn st": { name: "Penn State", id: 213, conf: "Big Ten" },
+        "penn state": { name: "Penn State", id: 213, conf: "Big Ten" },
+        "purdue": { name: "Purdue", id: 2509, conf: "Big Ten" },
+        "rutgers": { name: "Rutgers", id: 164, conf: "Big Ten" },
+        "ucla": { name: "UCLA", id: 26, conf: "Big Ten" },
+        "usc": { name: "USC", id: 30, conf: "Big Ten" },
+        "southern california": { name: "USC", id: 30, conf: "Big Ten" },
+        "washington": { name: "Washington", id: 264, conf: "Big Ten" },
+        "wisconsin": { name: "Wisconsin", id: 275, conf: "Big Ten" },
+
+        // ACC (17 Teams)
+        "boston college": { name: "Boston College", id: 103, conf: "ACC" },
+        "california": { name: "California", id: 25, conf: "ACC" },
+        "cal": { name: "California", id: 25, conf: "ACC" },
+        "clemson": { name: "Clemson", id: 228, conf: "ACC" },
+        "duke": { name: "Duke", id: 150, conf: "ACC" },
+        "florida st": { name: "Florida State", id: 52, conf: "ACC" },
+        "florida state": { name: "Florida State", id: 52, conf: "ACC" },
+        "georgia tech": { name: "Georgia Tech", id: 59, conf: "ACC" },
+        "louisville": { name: "Louisville", id: 97, conf: "ACC" },
+        "miami": { name: "Miami", id: 2390, conf: "ACC" },
+        "miami fl": { name: "Miami", id: 2390, conf: "ACC" },
+        "miami florida": { name: "Miami", id: 2390, conf: "ACC" },
+        "nc state": { name: "NC State", id: 152, conf: "ACC" },
+        "north carolina": { name: "North Carolina", id: 153, conf: "ACC" },
+        "unc": { name: "North Carolina", id: 153, conf: "ACC" },
+        "pittsburgh": { name: "Pittsburgh", id: 221, conf: "ACC" },
+        "pitt": { name: "Pittsburgh", id: 221, conf: "ACC" },
+        "smu": { name: "SMU", id: 2567, conf: "ACC" },
+        "stanford": { name: "Stanford", id: 24, conf: "ACC" },
+        "syracuse": { name: "Syracuse", id: 183, conf: "ACC" },
+        "virginia": { name: "Virginia", id: 258, conf: "ACC" },
+        "virginia tech": { name: "Virginia Tech", id: 259, conf: "ACC" },
+        "wake forest": { name: "Wake Forest", id: 154, conf: "ACC" },
+
+        // Big 12 (16 Teams)
+        "arizona": { name: "Arizona", id: 12, conf: "Big 12" },
+        "arizona st": { name: "Arizona State", id: 9, conf: "Big 12" },
+        "arizona state": { name: "Arizona State", id: 9, conf: "Big 12" },
+        "baylor": { name: "Baylor", id: 239, conf: "Big 12" },
+        "byu": { name: "BYU", id: 252, conf: "Big 12" },
+        "cincinnati": { name: "Cincinnati", id: 2132, conf: "Big 12" },
+        "colorado": { name: "Colorado", id: 38, conf: "Big 12" },
+        "houston": { name: "Houston", id: 248, conf: "Big 12" },
+        "iowa st": { name: "Iowa State", id: 66, conf: "Big 12" },
+        "iowa state": { name: "Iowa State", id: 66, conf: "Big 12" },
+        "kansas": { name: "Kansas", id: 2305, conf: "Big 12" },
+        "kansas st": { name: "Kansas State", id: 2306, conf: "Big 12" },
+        "kansas state": { name: "Kansas State", id: 2306, conf: "Big 12" },
+        "oklahoma st": { name: "Oklahoma State", id: 197, conf: "Big 12" },
+        "oklahoma state": { name: "Oklahoma State", id: 197, conf: "Big 12" },
+        "tcu": { name: "TCU", id: 2628, conf: "Big 12" },
+        "texas tech": { name: "Texas Tech", id: 2641, conf: "Big 12" },
+        "ucf": { name: "UCF", id: 2116, conf: "Big 12" },
+        "utah": { name: "Utah", id: 254, conf: "Big 12" },
+        "west virginia": { name: "West Virginia", id: 277, conf: "Big 12" },
+
+        // Pac-12 (8 Teams - 2026 Relaunch)
+        "boise st": { name: "Boise State", id: 68, conf: "Pac-12" },
+        "boise state": { name: "Boise State", id: 68, conf: "Pac-12" },
+        "colorado st": { name: "Colorado State", id: 36, conf: "Pac-12" },
+        "colorado state": { name: "Colorado State", id: 36, conf: "Pac-12" },
+        "fresno st": { name: "Fresno State", id: 278, conf: "Pac-12" },
+        "fresno state": { name: "Fresno State", id: 278, conf: "Pac-12" },
+        "oregon st": { name: "Oregon State", id: 204, conf: "Pac-12" },
+        "oregon state": { name: "Oregon State", id: 204, conf: "Pac-12" },
+        "san diego st": { name: "San Diego State", id: 21, conf: "Pac-12" },
+        "san diego state": { name: "San Diego State", id: 21, conf: "Pac-12" },
+        "texas st": { name: "Texas State", id: 326, conf: "Pac-12" },
+        "texas state": { name: "Texas State", id: 326, conf: "Pac-12" },
+        "utah st": { name: "Utah State", id: 328, conf: "Pac-12" },
+        "utah state": { name: "Utah State", id: 328, conf: "Pac-12" },
+        "washington st": { name: "Washington State", id: 265, conf: "Pac-12" },
+        "washington state": { name: "Washington State", id: 265, conf: "Pac-12" },
+
+        // Mountain West (10 Teams)
+        "air force": { name: "Air Force", id: 2005, conf: "Mountain West" },
+        "hawaii": { name: "Hawaii", id: 62, conf: "Mountain West" },
+        "nevada": { name: "Nevada", id: 2440, conf: "Mountain West" },
+        "new mexico": { name: "New Mexico", id: 167, conf: "Mountain West" },
+        "north dakota st": { name: "North Dakota State", id: 2449, conf: "Mountain West" },
+        "north dakota state": { name: "North Dakota State", id: 2449, conf: "Mountain West" },
+        "ndsu": { name: "North Dakota State", id: 2449, conf: "Mountain West" },
+        "northern illinois": { name: "Northern Illinois", id: 2459, conf: "Mountain West" },
+        "niu": { name: "Northern Illinois", id: 2459, conf: "Mountain West" },
+        "san jose st": { name: "San Jose State", id: 23, conf: "Mountain West" },
+        "san jose state": { name: "San Jose State", id: 23, conf: "Mountain West" },
+        "unlv": { name: "UNLV", id: 2439, conf: "Mountain West" },
+        "utep": { name: "UTEP", id: 2638, conf: "Mountain West" },
+        "wyoming": { name: "Wyoming", id: 2751, conf: "Mountain West" },
+
+        // American (AAC - 14 Teams)
+        "army": { name: "Army", id: 349, conf: "American" },
+        "charlotte": { name: "Charlotte", id: 2429, conf: "American" },
+        "east carolina": { name: "East Carolina", id: 151, conf: "American" },
+        "florida atlantic": { name: "Florida Atlantic", id: 2226, conf: "American" },
+        "fau": { name: "Florida Atlantic", id: 2226, conf: "American" },
+        "memphis": { name: "Memphis", id: 235, conf: "American" },
+        "navy": { name: "Navy", id: 2426, conf: "American" },
+        "north texas": { name: "North Texas", id: 249, conf: "American" },
+        "rice": { name: "Rice", id: 242, conf: "American" },
+        "south florida": { name: "South Florida", id: 58, conf: "American" },
+        "usf": { name: "South Florida", id: 58, conf: "American" },
+        "temple": { name: "Temple", id: 218, conf: "American" },
+        "tulane": { name: "Tulane", id: 2655, conf: "American" },
+        "tulsa": { name: "Tulsa", id: 202, conf: "American" },
+        "uab": { name: "UAB", id: 5, conf: "American" },
+        "utsa": { name: "UTSA", id: 2636, conf: "American" },
+
+        // Sun Belt (14 Teams)
+        "appalachian st": { name: "Appalachian State", id: 2026, conf: "Sun Belt" },
+        "appalachian state": { name: "Appalachian State", id: 2026, conf: "Sun Belt" },
+        "arkansas st": { name: "Arkansas State", id: 2032, conf: "Sun Belt" },
+        "arkansas state": { name: "Arkansas State", id: 2032, conf: "Sun Belt" },
+        "coastal carolina": { name: "Coastal Carolina", id: 324, conf: "Sun Belt" },
+        "georgia southern": { name: "Georgia Southern", id: 290, conf: "Sun Belt" },
+        "georgia st": { name: "Georgia State", id: 2247, conf: "Sun Belt" },
+        "georgia state": { name: "Georgia State", id: 2247, conf: "Sun Belt" },
+        "james madison": { name: "James Madison", id: 256, conf: "Sun Belt" },
+        "jmu": { name: "James Madison", id: 256, conf: "Sun Belt" },
+        "louisiana": { name: "Louisiana", id: 309, conf: "Sun Belt" },
+        "louisiana lafayette": { name: "Louisiana", id: 309, conf: "Sun Belt" },
+        "louisiana monroe": { name: "Louisiana-Monroe", id: 2433, conf: "Sun Belt" },
+        "ulm": { name: "Louisiana-Monroe", id: 2433, conf: "Sun Belt" },
+        "louisiana tech": { name: "Louisiana Tech", id: 2348, conf: "Sun Belt" },
+        "la tech": { name: "Louisiana Tech", id: 2348, conf: "Sun Belt" },
+        "marshall": { name: "Marshall", id: 276, conf: "Sun Belt" },
+        "old dominion": { name: "Old Dominion", id: 295, conf: "Sun Belt" },
+        "south alabama": { name: "South Alabama", id: 6, conf: "Sun Belt" },
+        "southern miss": { name: "Southern Miss", id: 2572, conf: "Sun Belt" },
+        "troy": { name: "Troy", id: 2653, conf: "Sun Belt" },
+
+        // MAC (13 Teams)
+        "akron": { name: "Akron", id: 2006, conf: "MAC" },
+        "ball st": { name: "Ball State", id: 2050, conf: "MAC" },
+        "ball state": { name: "Ball State", id: 2050, conf: "MAC" },
+        "bowling green": { name: "Bowling Green", id: 189, conf: "MAC" },
+        "buffalo": { name: "Buffalo", id: 2084, conf: "MAC" },
+        "central mich": { name: "Central Michigan", id: 2117, conf: "MAC" },
+        "central michigan": { name: "Central Michigan", id: 2117, conf: "MAC" },
+        "eastern mich": { name: "Eastern Michigan", id: 2199, conf: "MAC" },
+        "eastern michigan": { name: "Eastern Michigan", id: 2199, conf: "MAC" },
+        "kent st": { name: "Kent State", id: 2309, conf: "MAC" },
+        "kent state": { name: "Kent State", id: 2309, conf: "MAC" },
+        "massachusetts": { name: "UMass", id: 113, conf: "MAC" },
+        "umass": { name: "UMass", id: 113, conf: "MAC" },
+        "miami oh": { name: "Miami (OH)", id: 193, conf: "MAC" },
+        "miami ohio": { name: "Miami (OH)", id: 193, conf: "MAC" },
+        "ohio": { name: "Ohio", id: 195, conf: "MAC" },
+        "sacramento st": { name: "Sacramento State", id: 16, conf: "MAC" },
+        "sacramento state": { name: "Sacramento State", id: 16, conf: "MAC" },
+        "sac st": { name: "Sacramento State", id: 16, conf: "MAC" },
+        "toledo": { name: "Toledo", id: 2649, conf: "MAC" },
+        "western mich": { name: "Western Michigan", id: 2711, conf: "MAC" },
+        "western michigan": { name: "Western Michigan", id: 2711, conf: "MAC" },
+
+        // C-USA (10 Teams)
+        "delaware": { name: "Delaware", id: 48, conf: "C-USA" },
+        "fiu": { name: "FIU", id: 2229, conf: "C-USA" },
+        "florida international": { name: "FIU", id: 2229, conf: "C-USA" },
+        "jacksonville st": { name: "Jacksonville State", id: 55, conf: "C-USA" },
+        "jacksonville state": { name: "Jacksonville State", id: 55, conf: "C-USA" },
+        "kennesaw st": { name: "Kennesaw State", id: 338, conf: "C-USA" },
+        "kennesaw state": { name: "Kennesaw State", id: 338, conf: "C-USA" },
+        "liberty": { name: "Liberty", id: 2335, conf: "C-USA" },
+        "middle tennessee": { name: "Middle Tennessee", id: 2393, conf: "C-USA" },
+        "mtsu": { name: "Middle Tennessee", id: 2393, conf: "C-USA" },
+        "missouri st": { name: "Missouri State", id: 2623, conf: "C-USA" },
+        "missouri state": { name: "Missouri State", id: 2623, conf: "C-USA" },
+        "new mexico st": { name: "New Mexico State", id: 166, conf: "C-USA" },
+        "new mexico state": { name: "New Mexico State", id: 166, conf: "C-USA" },
+        "sam houston": { name: "Sam Houston", id: 2534, conf: "C-USA" },
+        "sam houston st": { name: "Sam Houston", id: 2534, conf: "C-USA" },
+        "western kentucky": { name: "Western Kentucky", id: 98, conf: "C-USA" },
+        "wku": { name: "Western Kentucky", id: 98, conf: "C-USA" },
+
+        // Independents (2 Teams)
+        "notre dame": { name: "Notre Dame", id: 87, conf: "Independent" },
+        "uconn": { name: "UConn", id: 41, conf: "Independent" },
+        "connecticut": { name: "UConn", id: 41, conf: "Independent" }
+    };
+
+    const SORTED_TEAM_KEYS = Object.keys(FBS_TEAMS).sort((a, b) => b.length - a.length);
+
+    const CONF_LOGOS = {
+        "SEC": "https://a.espncdn.com/i/leaguelogos/ncaa/500/sec.png",
+        "Big Ten": "https://a.espncdn.com/i/leaguelogos/ncaa/500/b1g.png",
+        "Big 12": "https://a.espncdn.com/i/leaguelogos/ncaa/500/b12.png",
+        "ACC": "https://a.espncdn.com/i/leaguelogos/ncaa/500/acc.png",
+        "American": "https://a.espncdn.com/i/leaguelogos/ncaa/500/aac.png",
+        "Mountain West": "https://a.espncdn.com/i/leaguelogos/ncaa/500/mwc.png",
+        "Sun Belt": "https://a.espncdn.com/i/leaguelogos/ncaa/500/sbc.png",
+        "MAC": "https://a.espncdn.com/i/leaguelogos/ncaa/500/mac.png",
+        "C-USA": "https://a.espncdn.com/i/leaguelogos/ncaa/500/cusa.png",
+        "Pac-12": "https://a.espncdn.com/i/leaguelogos/ncaa/500/pac12.png"
+    };
+
+    createApp({
+        data() {
+            return {
+                dataLoaded: false,
+                isLoading: true,
+                loadError: null,
+                games: [],
+                analyzedGames: [],
+                batchSlateGames: [],
+                activeTab: 'input',
+                
+                selectedGameId: '',
+                latestResult: null,
+                showPasteBox: false,
+                pastedText: '',
+                summarySearch: '',
+                batchSearch: '',
+
+                // Table Sorting State
+                summarySortKey: '',
+                summarySortAsc: true,
+                batchSortKey: '',
+                batchSortAsc: true,
+
+                tiers: {
+                    t1: ['lineca', 'linemasseyc', 'linefpi', 'linefei', 'linedokter', 'lineteamrank'],
+                    t2: ['linepimean', 'linesagpred', 'linesaggm', 'linesagrec', 'linemassey', 'lineclean', 'linecurry', 'linepayne', 'linedonchess'],
+                    t3: ['linelshfa', 'linelinreg', 'linevs', 'lineperform', 'lineharville', 'linepigskin', 'linebeckelo']
+                }
+            }
+        },
+        computed: {
+            selectedGame() {
+                if (this.selectedGameId === '') return null;
+                return this.games.find(g => g.id === this.selectedGameId) || null;
+            },
+            filteredSummary() {
+                let list = this.analyzedGames;
+                if (this.summarySearch.trim()) {
+                    const q = this.summarySearch.toLowerCase();
+                    list = list.filter(g => 
+                        (g.matchup && g.matchup.toLowerCase().includes(q)) || 
+                        (g.finalPick && g.finalPick.toLowerCase().includes(q)) || 
+                        (g.recommendedSide && g.recommendedSide.toLowerCase().includes(q)) ||
+                        (g.eventLabel && g.eventLabel.toLowerCase().includes(q))
+                    );
+                }
+                return this.sortList(list, this.summarySortKey, this.summarySortAsc);
+            },
+            filteredBatchSummary() {
+                let list = this.batchSlateGames;
+                if (this.batchSearch.trim()) {
+                    const q = this.batchSearch.toLowerCase();
+                    list = list.filter(g => 
+                        (g.matchup && g.matchup.toLowerCase().includes(q)) || 
+                        (g.finalPick && g.finalPick.toLowerCase().includes(q)) || 
+                        (g.recommendedSide && g.recommendedSide.toLowerCase().includes(q)) ||
+                        (g.eventLabel && g.eventLabel.toLowerCase().includes(q))
+                    );
+                }
+                return this.sortList(list, this.batchSortKey, this.batchSortAsc);
+            },
+            currentSlateStats() {
+                const targetList = this.activeTab === 'batch' ? this.batchSlateGames : this.analyzedGames;
+                if (!targetList || targetList.length === 0) return null;
+                let strong = 0, bet = 0, lean = 0;
+                targetList.forEach(g => {
+                    if (g.finalPick && g.finalPick.includes("STRONG BET")) strong++;
+                    else if (g.finalPick && g.finalPick.includes("BET")) bet++;
+                    else if (g.finalPick && g.finalPick.includes("LEAN")) lean++;
+                });
+                return { strong, bet, lean };
+            }
+        },
+        mounted() {
+            this.fetchData();
+        },
+        methods: {
+            onImgError(e) {
+                e.target.style.display = 'none';
+            },
+
+            getGameLine(game) {
+                if (!game) return null;
+                return game.sheetLine !== null ? game.sheetLine : game.sheetOpen;
+            },
+
+            getLineTrend(game) {
+                if (!game || game.sheetOpen === null || game.sheetLine === null) return null;
+                const diff = game.sheetLine - game.sheetOpen;
+                if (Math.abs(diff) < 0.001) {
+                    return {
+                        arrow: '→',
+                        text: 'No Movement',
+                        badgeClass: 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200',
+                        textClass: 'text-slate-400 dark:text-slate-500'
+                    };
+                }
+                if (diff > 0) {
+                    const pts = Math.abs(diff);
+                    return {
+                        arrow: '▲',
+                        text: `+${pts.toFixed(1)} ${game.home}`,
+                        badgeClass: 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300',
+                        textClass: 'text-emerald-600 dark:text-emerald-400'
+                    };
+                } else {
+                    const pts = Math.abs(diff);
+                    return {
+                        arrow: '▼',
+                        text: `+${pts.toFixed(1)} ${game.road}`,
+                        badgeClass: 'bg-blue-100 dark:bg-blue-950/80 text-blue-800 dark:text-blue-300',
+                        textClass: 'text-blue-600 dark:text-blue-400'
+                    };
+                }
+            },
+
+            toggleSort(tableType, key) {
+                if (tableType === 'summary') {
+                    if (this.summarySortKey === key) {
+                        this.summarySortAsc = !this.summarySortAsc;
+                    } else {
+                        this.summarySortKey = key;
+                        this.summarySortAsc = true;
+                    }
+                } else if (tableType === 'batch') {
+                    if (this.batchSortKey === key) {
+                        this.batchSortAsc = !this.batchSortAsc;
+                    } else {
+                        this.batchSortKey = key;
+                        this.batchSortAsc = true;
+                    }
+                }
+            },
+
+            getPickRank(pickStr) {
+                if (!pickStr) return 99;
+                const p = pickStr.toLowerCase();
+                if (p.includes('strong bet')) return 1;
+                if (p.includes('bet') && p.includes('tier 1')) return 2;
+                if (p.includes('bet') && p.includes('tier 2')) return 3;
+                if (p.includes('lean') && p.includes('tier 1')) return 4;
+                if (p.includes('lean') && p.includes('tier 2')) return 5;
+                if (p.includes('tier conflict') || p.includes('pass')) return 6;
+                return 7;
+            },
+
+            sortList(list, sortKey, sortAsc) {
+                if (!sortKey) return list;
+                return [...list].sort((a, b) => {
+                    if (sortKey === 'event') {
+                        const valA = a.eventShortLabel || '';
+                        const valB = b.eventShortLabel || '';
+                        return sortAsc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                    }
+                    if (sortKey === 't1') {
+                        const valA = a.t1Pct ?? -1;
+                        const valB = b.t1Pct ?? -1;
+                        return sortAsc ? valA - valB : valB - valA;
+                    }
+                    if (sortKey === 't2') {
+                        const valA = a.t2Pct ?? -1;
+                        const valB = b.t2Pct ?? -1;
+                        return sortAsc ? valA - valB : valB - valA;
+                    }
+                    if (sortKey === 'pick') {
+                        const rankA = this.getPickRank(a.finalPick);
+                        const rankB = this.getPickRank(b.finalPick);
+                        if (rankA !== rankB) {
+                            return sortAsc ? rankA - rankB : rankB - rankA;
+                        }
+                        return sortAsc ? (a.finalPick || '').localeCompare(b.finalPick || '') : (b.finalPick || '').localeCompare(a.finalPick || '');
+                    }
+                    return 0;
+                });
+            },
+
+            getTeamInfo(rawName) {
+                if (!rawName) return { name: "Unknown", conf: "N/A", logoUrl: null };
+                const clean = rawName.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+                
+                if (FBS_TEAMS[clean]) {
+                    const t = FBS_TEAMS[clean];
+                    return {
+                        name: t.name,
+                        conf: t.conf,
+                        logoUrl: `https://a.espncdn.com/i/teamlogos/ncaa/500/${t.id}.png`
+                    };
+                }
+
+                for (const key of SORTED_TEAM_KEYS) {
+                    const regex = new RegExp(`\\b${key}\\b`, 'i');
+                    if (regex.test(clean)) {
+                        const t = FBS_TEAMS[key];
+                        return {
+                            name: t.name,
+                            conf: t.conf,
+                            logoUrl: `https://a.espncdn.com/i/teamlogos/ncaa/500/${t.id}.png`
+                        };
+                    }
+                }
+
+                return {
+                    name: rawName,
+                    conf: "FBS / FCS",
+                    logoUrl: null
+                };
+            },
+
+            fetchData() {
+                this.isLoading = true;
+                this.loadError = null;
+                
+                const sheetId = "1wmHyzOuNQTm1_J_vMyD9DlrOB9wfy1ZIostoiSUkrew";
+                const callbackName = "gvizCallback_" + Math.floor(Math.random() * 1000000);
+
+                let isCompleted = false;
+
+                const cleanup = () => {
+                    clearTimeout(timer);
+                    delete window[callbackName];
+                    const scriptTag = document.getElementById(callbackName);
+                    if (scriptTag) scriptTag.remove();
+                };
+
+                const tryDirectCsvFallback = () => {
+                    const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+                    Papa.parse(csvUrl, {
+                        download: true,
+                        header: false,
+                        skipEmptyLines: true,
+                        dynamicTyping: true,
+                        complete: (results) => {
+                            try {
+                                this.processMatrixRows(results.data);
+                                this.isLoading = false;
+                            } catch (e) {
+                                this.isLoading = false;
+                                this.loadError = "Ad-blocker or cross-origin restriction prevented automatic download. Paste CSV text below.";
+                                this.showPasteBox = true;
+                            }
+                        },
+                        error: () => {
+                            this.isLoading = false;
+                            this.loadError = "Ad-blocker or browser shield blocked Google Sheets. Paste CSV text or upload below.";
+                            this.showPasteBox = true;
+                        }
+                    });
+                };
+
+                const timer = setTimeout(() => {
+                    if (this.isLoading && !isCompleted) {
+                        cleanup();
+                        tryDirectCsvFallback();
+                    }
+                }, 4000);
+
+                window[callbackName] = (response) => {
+                    isCompleted = true;
+                    cleanup();
+                    try {
+                        if (!response || !response.table) {
+                            throw new Error("Invalid table data returned by Google API.");
+                        }
+                        this.processGvizTable(response.table);
+                        this.isLoading = false;
+                    } catch (e) {
+                        tryDirectCsvFallback();
+                    }
+                };
+
+                const script = document.createElement("script");
+                script.id = callbackName;
+                script.src = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=responseHandler:${callbackName}`;
+                script.onerror = () => {
+                    cleanup();
+                    tryDirectCsvFallback();
+                };
+                document.head.appendChild(script);
+            },
+
+            processGvizTable(table) {
+                const matrix = [];
+                
+                if (table.cols && table.cols.length > 0) {
+                    const headerRow = table.cols.map(c => {
+                        return (c.label && c.label.trim()) ? c.label.trim() : (c.id || '');
+                    });
+                    matrix.push(headerRow);
+                }
+
+                if (table.rows) {
+                    table.rows.forEach(r => {
+                        if (!r || !r.c) return;
+                        const row = r.c.map(cell => {
+                            if (!cell) return null;
+                            if (cell.v !== null && cell.v !== undefined) return cell.v;
+                            if (cell.f !== null && cell.f !== undefined) return cell.f;
+                            return null;
+                        });
+                        matrix.push(row);
+                    });
+                }
+
+                this.processMatrixRows(matrix);
+            },
+
+            processMatrixRows(matrix) {
+                if (!matrix || matrix.length === 0) {
+                    throw new Error("No data received from spreadsheet.");
+                }
+
+                let headerIdx = -1;
+
+                for (let i = 0; i < Math.min(20, matrix.length); i++) {
+                    const rowStr = matrix[i].map(v => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+                    const hasRoad = rowStr.some(h => ['road', 'visitor', 'visitors', 'away', 'roadteam'].includes(h));
+                    const hasHome = rowStr.some(h => ['home', 'host', 'hometeam'].includes(h));
+                    const hasLine = rowStr.some(h => ['line', 'lineopen', 'spread', 'open'].includes(h));
+
+                    if ((hasRoad && hasHome) || (hasLine && (hasRoad || hasHome))) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+
+                let headers = [];
+                let dataRows = [];
+
+                if (headerIdx !== -1) {
+                    headers = matrix[headerIdx].map(v => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+                    dataRows = matrix.slice(headerIdx + 1);
+                } else {
+                    const isRow0Data = !isNaN(parseFloat(matrix[0][0])) || !isNaN(parseFloat(matrix[0][1]));
+                    if (isRow0Data) {
+                        headers = ['lineopen', 'line', 'road', 'home'];
+                        dataRows = matrix;
+                    } else {
+                        headers = matrix[0].map(v => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+                        dataRows = matrix.slice(1);
+                    }
+                }
+
+                let roadIdx = headers.findIndex(h => ['road', 'visitor', 'visitors', 'away', 'roadteam'].includes(h));
+                let homeIdx = headers.findIndex(h => ['home', 'host', 'hometeam'].includes(h));
+                let openIdx = headers.findIndex(h => ['lineopen', 'open', 'opening', 'openline'].includes(h));
+                let lineIdx = headers.findIndex(h => h === 'line' || ['currentline', 'spread', 'curline'].includes(h));
+
+                if (openIdx === -1) openIdx = 0;
+                if (lineIdx === -1) lineIdx = 1;
+                if (roadIdx === -1) roadIdx = 2;
+                if (homeIdx === -1) homeIdx = 3;
+
+                const formatted = [];
+
+                dataRows.forEach(row => {
+                    if (!row || row.length < 4) return;
+                    
+                    const roadVal = row[roadIdx];
+                    const homeVal = row[homeIdx];
+                    if (!roadVal || !homeVal) return;
+                    if (String(homeVal).trim().toLowerCase() === 'home') return;
+
+                    const obj = {
+                        road: String(roadVal).trim(),
+                        home: String(homeVal).trim(),
+                        lineopen: row[openIdx],
+                        line: row[lineIdx]
+                    };
+
+                    headers.forEach((h, colIdx) => {
+                        if (h && colIdx !== roadIdx && colIdx !== homeIdx && colIdx !== openIdx && colIdx !== lineIdx) {
+                            obj[h] = row[colIdx];
+                        }
+                    });
+
+                    formatted.push(obj);
+                });
+
+                if (formatted.length === 0) {
+                    throw new Error("No valid matchups could be parsed from data rows.");
+                }
+
+                this.processData(formatted);
+            },
+
+            handleFileUpload(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                Papa.parse(file, {
+                    header: false,
+                    skipEmptyLines: true,
+                    dynamicTyping: true,
+                    complete: (results) => {
+                        try {
+                            this.processMatrixRows(results.data);
+                        } catch (e) {
+                            this.loadError = e.message;
+                        }
+                    }
+                });
+            },
+
+            parsePastedText() {
+                if (!this.pastedText.trim()) return;
+                Papa.parse(this.pastedText.trim(), {
+                    header: false,
+                    skipEmptyLines: true,
+                    dynamicTyping: true,
+                    complete: (results) => {
+                        try {
+                            this.processMatrixRows(results.data);
+                        } catch (e) {
+                            this.loadError = e.message;
+                        }
+                    }
+                });
+            },
+
+            processData(data) {
+                this.games = data.map((row, idx) => {
+                    let rawOpen = row.lineopen;
+                    let sheetOpen = (rawOpen !== null && rawOpen !== undefined && rawOpen !== '') ? parseFloat(rawOpen) : null;
+
+                    let rawLine = row.line;
+                    let sheetLine = (rawLine !== null && rawLine !== undefined && rawLine !== '') ? parseFloat(rawLine) : null;
+
+                    return { 
+                        id: idx, 
+                        home: row.home, 
+                        road: row.road, 
+                        sheetOpen: isNaN(sheetOpen) ? null : sheetOpen,
+                        sheetLine: isNaN(sheetLine) ? null : sheetLine,
+                        raw: row 
+                    };
+                }).filter(g => g.home.toLowerCase() !== 'home'); 
+                
+                this.games.sort((a, b) => a.road.localeCompare(b.road));
+                this.dataLoaded = true;
+            },
+
+            formatSportsbookLine(homeTeam, margin) {
+                if (margin === null || margin === undefined || isNaN(margin)) return 'N/A';
+                const spread = -margin;
+                return `${homeTeam} ${spread > 0 ? '+' : ''}${spread}`;
+            },
+            
+            analyzeTier(modelsList, rawData, liveLine) {
+                let models = [];
+                modelsList.forEach(m => {
+                    const key = m.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const val = parseFloat(rawData[key]);
+                    if (!isNaN(val)) models.push(val);
+                });
+
+                if (models.length === 0) return { pick: 'PASS', pct: 0, edge: 0, hit: 0, total: 0, homeCovers: 0, awayCovers: 0, pushes: 0, side: null, avgProjection: null };
+
+                let homeCovers = 0, awayCovers = 0, pushes = 0;
+                let homeEdges = [], awayEdges = [];
+                let avgProjection = models.reduce((a, b) => a + b, 0) / models.length;
+
+                models.forEach(m => {
+                    const diff = m - liveLine;
+                    if (Math.abs(diff) < 0.001) {
+                        pushes++;
+                    } else if (diff > 0) { 
+                        homeCovers++; 
+                        homeEdges.push(diff); 
+                    } else { 
+                        awayCovers++; 
+                        awayEdges.push(-diff); 
+                    }
+                });
+
+                let total = models.length;
+                let activeDecisions = total - pushes;
+
+                if (activeDecisions === 0) {
+                    return { pick: 'PASS', pct: 0, edge: 0, hit: 0, total, homeCovers: 0, awayCovers: 0, pushes, side: null, avgProjection };
+                }
+
+                if (homeCovers > total / 2) {
+                    let edge = homeEdges.reduce((a, b) => a + b, 0) / homeEdges.length;
+                    let pick = (homeCovers === activeDecisions && homeCovers >= 4) ? 'BET' : 'LEAN';
+                    return { pick, pct: Math.round((homeCovers / total) * 100), edge, hit: homeCovers, total, homeCovers, awayCovers, pushes, side: 'HOME', avgProjection };
+                } else if (awayCovers > total / 2) {
+                    let edge = awayEdges.reduce((a, b) => a + b, 0) / awayEdges.length;
+                    let pick = (awayCovers === activeDecisions && awayCovers >= 4) ? 'BET' : 'LEAN';
+                    return { pick, pct: Math.round((awayCovers / total) * 100), edge, hit: awayCovers, total, homeCovers, awayCovers, pushes, side: 'AWAY', avgProjection };
+                } else {
+                    let topCovers = Math.max(homeCovers, awayCovers);
+                    let pct = Math.round((topCovers / total) * 100);
+                    return { pick: 'PASS', pct, edge: 0, hit: topCovers, total, homeCovers, awayCovers, pushes, side: null, avgProjection };
+                }
+            },
+            
+            computeMatchup(game, targetLine) {
+                const line = parseFloat(targetLine);
+                const roadInfo = this.getTeamInfo(game.road);
+                const homeInfo = this.getTeamInfo(game.home);
+
+                const r1 = this.analyzeTier(this.tiers.t1, game.raw, line);
+                const r2 = this.analyzeTier(this.tiers.t2, game.raw, line);
+                const r3 = this.analyzeTier(this.tiers.t3, game.raw, line);
+
+                let t1Pick = r1.pick;
+                if (t1Pick === 'BET' && r1.edge < 1.5) t1Pick = 'LEAN';
+
+                let t2Pick = r2.pick;
+                if (t2Pick === 'BET' && r2.edge < 2.0) t2Pick = 'LEAN';
+
+                let finalPick = 'PASS';
+                let activeSide = null;
+
+                const tierConflict = (r1.side && r2.side && r1.side !== r2.side && t1Pick !== 'PASS' && t2Pick !== 'PASS');
+
+                if (tierConflict) {
+                    finalPick = "TIER CONFLICT / PASS";
+                    activeSide = null;
+                } else if (t1Pick === 'BET' && t2Pick === 'BET' && r1.side === r2.side) {
+                    finalPick = "STRONG BET (T1 & T2)";
+                    activeSide = r1.side;
+                } else if (t1Pick !== 'PASS') {
+                    finalPick = t1Pick + " (Tier 1)";
+                    activeSide = r1.side;
+                } else if (t2Pick !== 'PASS') {
+                    finalPick = t2Pick + " (Tier 2)";
+                    activeSide = r2.side;
+                }
+
+                if (activeSide && r3.pick === 'BET' && r3.side !== activeSide) {
+                    if (finalPick.includes("STRONG BET") || finalPick.includes("BET")) {
+                        finalPick = finalPick.replace("STRONG BET", "LEAN").replace("BET", "LEAN") + " (T3 Downgrade)";
+                    } else if (finalPick.includes("LEAN")) {
+                        finalPick = "PASS (T3 Downgrade)";
+                        activeSide = null;
+                    }
+                }
+
+                const formatRead = (r) => (r.total === 0 ? "N/A" : `${r.pct}%`);
+
+                const formatModelAvg = (avg) => {
+                    if (avg === null || isNaN(avg)) return "N/A";
+                    const spread = -avg;
+                    return `${game.home} ${spread > 0 ? '+' : ''}${spread.toFixed(1)}`;
+                };
+
+                let recommendedSide = "No Consensus";
+                if (activeSide === 'HOME') {
+                    let spread = -line;
+                    recommendedSide = `${game.home} ${spread > 0 ? '+' : ''}${spread}`;
+                } else if (activeSide === 'AWAY') {
+                    let spread = line;
+                    recommendedSide = `${game.road} ${spread > 0 ? '+' : ''}${spread}`;
+                }
+
+                let eventLabel = "Non-Conference Matchup";
+                let eventShortLabel = "NON-CONF";
+                let eventLogo = null;
+                let eventBadgeStyle = "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700";
+
+                if (roadInfo.conf && homeInfo.conf && roadInfo.conf === homeInfo.conf && roadInfo.conf !== "Independent" && roadInfo.conf !== "FBS / FCS") {
+                    eventLabel = `${homeInfo.conf} Matchup`;
+                    eventShortLabel = homeInfo.conf;
+                    eventLogo = CONF_LOGOS[homeInfo.conf] || null;
+                    eventBadgeStyle = "bg-blue-100 dark:bg-blue-950/80 text-blue-900 dark:text-blue-300 border border-blue-300 dark:border-blue-800";
+                }
+
+                return {
+                    matchup: `${game.road} @ ${game.home}`,
+                    road: game.road,
+                    home: game.home,
+                    roadInfo,
+                    homeInfo,
+                    eventLabel,
+                    eventShortLabel,
+                    eventLogo,
+                    eventBadgeStyle,
+                    sheetOpenFormattedLine: this.formatSportsbookLine(game.home, game.sheetOpen),
+                    sheetFormattedLine: this.formatSportsbookLine(game.home, game.sheetLine),
+                    formattedLine: this.formatSportsbookLine(game.home, line),
+                    t1Text: formatRead(r1),
+                    t2Text: formatRead(r2),
+                    t1Pct: r1.pct,
+                    t2Pct: r2.pct,
+                    t1Hit: r1.hit,
+                    t1Total: r1.total,
+                    t2Hit: r2.hit,
+                    t2Total: r2.total,
+                    t1AvgFormatted: formatModelAvg(r1.avgProjection),
+                    t2AvgFormatted: formatModelAvg(r2.avgProjection),
+                    finalPick,
+                    recommendedSide
+                };
+            },
+
+            runAnalysis() {
+                if (!this.selectedGame) return;
+                const line = this.getGameLine(this.selectedGame);
+
+                if (line === null || isNaN(line)) {
+                    alert("No valid benchmark spread line found in the sheet for this matchup.");
+                    return;
+                }
+
+                const result = this.computeMatchup(this.selectedGame, line);
+                this.latestResult = result;
+
+                const existingIdx = this.analyzedGames.findIndex(g => g.matchup === result.matchup);
+                if (existingIdx > -1) {
+                    this.analyzedGames[existingIdx] = result;
+                } else {
+                    this.analyzedGames.unshift(result);
+                }
+            },
+
+            batchAnalyzeAll() {
+                const batch = [];
+                this.games.forEach(game => {
+                    const line = this.getGameLine(game);
+                    if (line !== null && !isNaN(line)) {
+                        batch.push(this.computeMatchup(game, line));
+                    }
+                });
+                this.batchSlateGames = batch;
+                this.activeTab = 'batch';
+            },
+
+            getResultBorderColor(pick) {
+                if (pick.includes("STRONG BET")) return "border-emerald-500 ring-2 ring-emerald-500/20 dark:ring-emerald-500/30";
+                if (pick.includes("BET")) return "border-green-400 ring-2 ring-green-400/20 dark:ring-green-400/30";
+                if (pick.includes("LEAN")) return "border-blue-400 ring-2 ring-blue-400/20 dark:ring-blue-400/30";
+                if (pick.includes("CONFLICT")) return "border-amber-400 ring-2 ring-amber-400/20 dark:ring-amber-400/30";
+                return "border-slate-200 dark:border-slate-800";
+            },
+
+            getResultBadgeColor(pick) {
+                if (pick.includes("STRONG BET")) return "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800";
+                if (pick.includes("BET")) return "bg-green-100 dark:bg-green-950 text-green-800 dark:text-green-300 border border-green-300 dark:border-green-800";
+                if (pick.includes("LEAN")) return "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-300 dark:border-blue-800";
+                if (pick.includes("CONFLICT")) return "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800";
+                return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700";
+            }
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>
